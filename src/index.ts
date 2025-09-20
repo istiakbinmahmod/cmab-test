@@ -12,15 +12,91 @@
  */
 
 export default {
-	async fetch(request, env, ctx): Promise<Response> {
-		const url = new URL(request.url);
-		switch (url.pathname) {
-			case '/message':
-				return new Response('Hello, World!');
-			case '/random':
-				return new Response(crypto.randomUUID());
-			default:
-				return new Response('Not Found', { status: 404 });
-		}
-	},
-} satisfies ExportedHandler<Env>;
+  async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+    try {
+      const url = new URL(request.url)
+
+      // Handle CORS preflight requests
+      if (request.method === 'OPTIONS') {
+        return handleCORS()
+      }
+
+      // Handle predict endpoint
+      if (url.pathname.startsWith('/predict/')) {
+        return handlePredictRequest(request)
+      }
+
+      // Default response for other requests
+      return new Response('Hello from Cloudflare Worker!', {
+        status: 200,
+        headers: {
+          'Content-Type': 'text/plain',
+          'Access-Control-Allow-Origin': '*'
+        }
+      })
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error'
+      return new Response(`Error: ${errorMessage}`, {
+        status: 500,
+        headers: {
+          'Content-Type': 'text/plain',
+          'Access-Control-Allow-Origin': '*'
+        }
+      })
+    }
+  },
+}
+
+function handleCORS(): Response {
+  return new Response(null, {
+    status: 204,
+    headers: {
+      'Access-Control-Allow-Origin': '*',
+      'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
+      'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+      'Access-Control-Max-Age': '86400',
+    },
+  })
+}
+
+async function handlePredictRequest(request: Request): Promise<Response> {
+  try {
+    const url = new URL(request.url)
+    const experimentId = url.pathname.split('/predict/')[1]
+
+    // Forward to prediction API with minimal essential headers
+    const apiUrl = `https://prediction.cmab.optimizely.com/predict/${experimentId}`
+
+    // Only include essential headers for API communication
+    const headers = new Headers()
+    headers.set("content-type", "text/plain;charset=UTF-8")
+    headers.set("accept", "*/*")
+
+    // Stream the request body for better performance
+    const response = await fetch(apiUrl, {
+      method: request.method,
+      headers: headers,
+      body: request.body, // Stream the body directly instead of reading it first
+    })
+
+    // Stream the response back with CORS headers
+    return new Response(response.body, {
+      status: response.status,
+      headers: {
+        'Content-Type': response.headers.get('content-type') || 'application/json',
+        'Access-Control-Allow-Origin': '*',
+        'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
+        'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+      },
+    })
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error'
+    return new Response(`Prediction API Error: ${errorMessage}`, {
+      status: 500,
+      headers: {
+        'Content-Type': 'text/plain',
+        'Access-Control-Allow-Origin': '*'
+      }
+    })
+  }
+}
